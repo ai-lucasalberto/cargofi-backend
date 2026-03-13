@@ -168,18 +168,38 @@ def _file_to_b64_media(content: bytes, media_type: str) -> tuple[str, str]:
 
 
 def _extract_pdf_text(content: bytes) -> str:
-    """Extract text from a PDF using pypdf."""
+    """Extract selectable text from a PDF using pypdf."""
     try:
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(content))
         pages = []
-        for i, page in enumerate(reader.pages[:20]):  # max 20 pages
+        for i, page in enumerate(reader.pages[:20]):
             text = page.extract_text() or ""
             if text.strip():
                 pages.append(f"--- Página {i+1} ---\n{text.strip()}")
         return "\n\n".join(pages) if pages else ""
     except Exception:
         return ""
+
+
+def _pdf_to_images_b64(content: bytes) -> list[tuple[str, str]]:
+    """Render PDF pages as JPEG images using PyMuPDF. Returns list of (b64, media_type)."""
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(stream=content, filetype="pdf")
+        images = []
+        for i, page in enumerate(doc):
+            if i >= 5:  # max 5 pages for demo
+                break
+            mat = fitz.Matrix(2.0, 2.0)  # 2x zoom = ~150 DPI
+            pix = page.get_pixmap(matrix=mat)
+            img_bytes = pix.tobytes("jpeg")
+            b64 = base64.standard_b64encode(img_bytes).decode("utf-8")
+            images.append((b64, "image/jpeg"))
+        doc.close()
+        return images
+    except Exception:
+        return []
 
 
 def _detect_doc_type(filename: str, hint: Optional[str]) -> str:
@@ -231,11 +251,19 @@ async def extract_document(
 
     # Build message content
     if is_pdf:
-        # Extract text from PDF — works with any model, any size
         pdf_text = _extract_pdf_text(content)
-        if not pdf_text:
-            raise HTTPException(422, "No se pudo extraer texto del PDF. Intenta con una imagen del documento.")
-        message_content = [{"type": "text", "text": f"Contenido del documento:\n\n{pdf_text}\n\n{prompt}"}]
+        if pdf_text:
+            # Digitized PDF — send as text
+            message_content = [{"type": "text", "text": f"Contenido del documento:\n\n{pdf_text}\n\n{prompt}"}]
+        else:
+            # Scanned PDF — render pages as images
+            page_images = _pdf_to_images_b64(content)
+            if not page_images:
+                raise HTTPException(422, "No se pudo procesar el PDF. Intenta convertirlo a imagen (JPG/PNG).")
+            message_content = []
+            for b64, mtype in page_images:
+                message_content.append({"type": "image", "source": {"type": "base64", "media_type": mtype, "data": b64}})
+            message_content.append({"type": "text", "text": prompt})
     else:
         b64_data, media_type = _file_to_b64_media(content, media_type)
         message_content = [
