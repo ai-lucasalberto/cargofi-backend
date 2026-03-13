@@ -230,7 +230,7 @@ async def extract_document(
 
     try:
         response = get_client().messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-3-haiku-20240307",
             max_tokens=4096,
             system=EXTRACT_SYSTEM,
             messages=[{
@@ -288,7 +288,7 @@ async def validate_shipment(
     )
 
     response = get_client().messages.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-3-haiku-20240307",
         max_tokens=2048,
         system=VALIDATE_SYSTEM,
         messages=[{"role": "user", "content": prompt}]
