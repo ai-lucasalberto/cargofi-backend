@@ -228,18 +228,20 @@ async def extract_document(
             "source": {"type": "base64", "media_type": media_type, "data": b64_data},
         }
 
-    response = get_client().messages.create(
-        model="claude-opus-4-5",
-        max_tokens=4096,
-        system=EXTRACT_SYSTEM,
-        messages=[{
-            "role": "user",
-            "content": [doc_block, {"type": "text", "text": prompt}]
-        }]
-    )
+    try:
+        response = get_client().messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=4096,
+            system=EXTRACT_SYSTEM,
+            messages=[{
+                "role": "user",
+                "content": [doc_block, {"type": "text", "text": prompt}]
+            }]
+        )
+    except Exception as e:
+        raise HTTPException(502, f"Error al llamar a Claude: {str(e)}")
 
     raw = response.content[0].text.strip()
-    # Strip possible markdown fences
     raw = re.sub(r"^```json\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
 
@@ -286,7 +288,7 @@ async def validate_shipment(
     )
 
     response = get_client().messages.create(
-        model="claude-opus-4-5",
+        model="claude-3-5-sonnet-20241022",
         max_tokens=2048,
         system=VALIDATE_SYSTEM,
         messages=[{"role": "user", "content": prompt}]
@@ -308,3 +310,14 @@ async def validate_shipment(
 async def get_doc_types():
     """Return supported document types."""
     return {k: v["label"] for k, v in DOC_SCHEMAS.items()}
+
+
+@router.get("/health")
+async def health():
+    """Health check — verify API key is loaded."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    return {
+        "status": "ok",
+        "api_key_set": bool(key),
+        "api_key_prefix": key[:10] + "..." if key else None,
+    }
