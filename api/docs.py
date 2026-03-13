@@ -9,7 +9,12 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 router = APIRouter()
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
+def get_client() -> anthropic.Anthropic:
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise HTTPException(503, "ANTHROPIC_API_KEY not configured on server")
+    return anthropic.Anthropic(api_key=key)
 
 # ── Supported doc types ──────────────────────────────────────────────────────
 DOC_SCHEMAS = {
@@ -223,7 +228,7 @@ async def extract_document(
             "source": {"type": "base64", "media_type": media_type, "data": b64_data},
         }
 
-    response = client.messages.create(
+    response = get_client().messages.create(
         model="claude-opus-4-5",
         max_tokens=4096,
         system=EXTRACT_SYSTEM,
@@ -280,7 +285,7 @@ async def validate_shipment(
         operation_type=operation_type,
     )
 
-    response = client.messages.create(
+    response = get_client().messages.create(
         model="claude-opus-4-5",
         max_tokens=2048,
         system=VALIDATE_SYSTEM,
