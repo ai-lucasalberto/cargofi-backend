@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import os
 import re
@@ -160,13 +161,25 @@ Evalúa y responde con:
 
 def _file_to_b64_media(content: bytes, media_type: str) -> tuple[str, str]:
     """Return (base64_data, media_type) suitable for Claude vision."""
-    if media_type == "application/pdf":
-        b64 = base64.standard_b64encode(content).decode("utf-8")
-        return b64, "application/pdf"
     b64 = base64.standard_b64encode(content).decode("utf-8")
     if media_type not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
         media_type = "image/jpeg"
     return b64, media_type
+
+
+def _extract_pdf_text(content: bytes) -> str:
+    """Extract text from a PDF using pypdf."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(content))
+        pages = []
+        for i, page in enumerate(reader.pages[:20]):  # max 20 pages
+            text = page.extract_text() or ""
+            if text.strip():
+                pages.append(f"--- Página {i+1} ---\n{text.strip()}")
+        return "\n\n".join(pages) if pages else ""
+    except Exception:
+        return ""
 
 
 def _detect_doc_type(filename: str, hint: Optional[str]) -> str:
@@ -206,7 +219,7 @@ async def extract_document(
         raise HTTPException(413, "Archivo demasiado grande. Máximo 20 MB.")
 
     media_type = file.content_type or "image/jpeg"
-    b64_data, media_type = _file_to_b64_media(content, media_type)
+    is_pdf = media_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")
 
     doc_type = _detect_doc_type(file.filename or "", doc_type_hint)
     schema = DOC_SCHEMAS.get(doc_type, DOC_SCHEMAS["commercial_invoice"])
@@ -216,27 +229,26 @@ async def extract_document(
         fields_json=json.dumps(schema["fields"], ensure_ascii=False, indent=2),
     )
 
-    # Build content block (PDF vs image)
-    if media_type == "application/pdf":
-        doc_block = {
-            "type": "document",
-            "source": {"type": "base64", "media_type": "application/pdf", "data": b64_data},
-        }
+    # Build message content
+    if is_pdf:
+        # Extract text from PDF — works with any model, any size
+        pdf_text = _extract_pdf_text(content)
+        if not pdf_text:
+            raise HTTPException(422, "No se pudo extraer texto del PDF. Intenta con una imagen del documento.")
+        message_content = [{"type": "text", "text": f"Contenido del documento:\n\n{pdf_text}\n\n{prompt}"}]
     else:
-        doc_block = {
-            "type": "image",
-            "source": {"type": "base64", "media_type": media_type, "data": b64_data},
-        }
+        b64_data, media_type = _file_to_b64_media(content, media_type)
+        message_content = [
+            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64_data}},
+            {"type": "text", "text": prompt},
+        ]
 
     try:
         response = get_client().messages.create(
             model="claude-haiku-4-5",
             max_tokens=4096,
             system=EXTRACT_SYSTEM,
-            messages=[{
-                "role": "user",
-                "content": [doc_block, {"type": "text", "text": prompt}]
-            }]
+            messages=[{"role": "user", "content": message_content}]
         )
     except Exception as e:
         raise HTTPException(502, f"Error al llamar a Claude: {str(e)}")
