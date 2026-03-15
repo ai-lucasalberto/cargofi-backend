@@ -6,3 +6,4 @@ pypdf
 PyMuPDF
 httpx
 email-validator
+resend
