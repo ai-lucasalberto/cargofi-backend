@@ -4,3 +4,5 @@ anthropic
 python-multipart
 pypdf
 PyMuPDF
+httpx
+email-validator
